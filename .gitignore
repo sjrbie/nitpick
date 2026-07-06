@@ -1,0 +1,13 @@
+# Nitpick per-repo state
+.nitpick/
+
+*plan.md
+
+# Binaries
+/nitpick
+/nitpick.exe
+/dist/
+
+# Go
+*.test
+*.out
