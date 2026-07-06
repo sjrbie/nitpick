@@ -81,6 +81,31 @@ func writeComments(w io.Writer, comments []track.CommentProgress) {
 	}
 }
 
+// renderScrape reports the outcome of a scrape (or dry run).
+func renderScrape(w io.Writer, res app.ScrapeResult) {
+	verb := "Posted"
+	if res.DryRun {
+		verb = "Would post"
+	}
+	if len(res.Posted) == 0 && len(res.Failures) == 0 {
+		fmt.Fprintf(w, "No \"// nit:\" markers found for PR #%d (%s).\n", res.PR.Number, res.PR.HeadRef)
+		return
+	}
+	fmt.Fprintf(w, "%s %d comment(s) to PR #%d (%s):\n\n", verb, len(res.Posted), res.PR.Number, res.PR.HeadRef)
+	for _, m := range res.Posted {
+		fmt.Fprintf(w, "  %s:%d\n", m.Path, m.Line)
+		for _, line := range strings.Split(m.Body, "\n") {
+			fmt.Fprintf(w, "      %s\n", line)
+		}
+	}
+	if len(res.Failures) > 0 {
+		fmt.Fprintf(w, "\n%d comment(s) failed to post:\n\n", len(res.Failures))
+		for _, f := range res.Failures {
+			fmt.Fprintf(w, "  %s:%d — %v\n", f.Marker.Path, f.Marker.Line, f.Err)
+		}
+	}
+}
+
 // statusMark returns a short, greppable label for a status.
 func statusMark(s track.Status) string {
 	switch s {

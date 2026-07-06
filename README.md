@@ -12,8 +12,9 @@ Built in Go with **almost no dependencies** (standard library only, so far) and
 designed so support for other forges — GitLab, Gitea, … — can slot in behind a
 single interface.
 
-> **Status:** early days. Reading and progress-tracking work today (GitHub).
-> The inline-comment round-trip is next. See [Roadmap](#roadmap).
+> **Status:** early days, but the core loop works on GitHub — read PRs, track
+> progress, and post `// nit:` comments straight from your code. See
+> [Roadmap](#roadmap).
 
 ---
 
@@ -27,8 +28,9 @@ flips that around:
 - **Know what's left.** Nitpick diffs each comment against your local branch and
   tells you whether the line it points to has been **addressed**, is still
   **open**, or **can't be determined** — a fast, honest progress hint.
-- **Reply in code _(coming soon)_.** Drop a `// nit:` note on the relevant line,
-  and a pre-commit scraper turns it into a real review comment on the PR.
+- **Reply in code.** Drop a `// nit:` note on the relevant line, and a scraper
+  (run by hand or as a pre-commit hook) turns it into a real review comment on
+  the PR — then strips the marker back out and stashes what it posted.
 
 ---
 
@@ -88,6 +90,37 @@ nitpick pr view 42
 nitpick pr comments 42
 ```
 
+### Replying in code
+
+While reviewing a branch that has an open PR, jot notes right where they belong:
+
+```go
+func handler(w http.ResponseWriter, r *http.Request) {
+    // nit: this should check the context deadline
+    process(r)
+    id := r.Header.Get("X-Id") // nit: validate this before use
+}
+```
+
+Then post them all at once:
+
+```sh
+nitpick scrape --dry-run   # preview what would be posted, and where
+nitpick scrape             # post to the branch's PR, strip markers, stash them
+```
+
+Nitpick maps each marker to the right line in the PR diff, posts it as a review
+comment, removes the marker from your file, and records what it posted under
+`.nitpick/`. Own-line markers attach to the code line below them; trailing
+markers attach to their own line. Any comment-style leader works — `//`, `#`,
+`--`, `;`, `/* */`, `<!-- -->`.
+
+To run it automatically before every commit:
+
+```sh
+nitpick hook install       # writes a pre-commit hook that runs "nitpick scrape"
+```
+
 Every command supports `--json` for scripting:
 
 ```sh
@@ -124,8 +157,8 @@ is truly resolved.
 
 - [x] **Read** — list/view PRs and their review comments (GitHub).
 - [x] **Track** — addressed/open/unknown progress from your local branch.
-- [ ] **Round-trip** — write `// nit:` comments in code; scrape and post them on
-      commit; stash them locally for reuse.
+- [x] **Round-trip** — write `// nit:` comments in code; scrape and post them,
+      strip them back out, and stash them locally for reuse.
 - [ ] **Extensibility** — a second forge (GitLab) to prove the interface; an
       optional interactive TUI over the same core.
 

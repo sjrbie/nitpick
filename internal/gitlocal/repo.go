@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -60,9 +61,44 @@ func (r *Repo) CurrentBranch(ctx context.Context) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
+// HookPath returns the absolute path where a git hook of the given name
+// (e.g. "pre-commit") should live, honoring worktrees and custom hook dirs.
+func (r *Repo) HookPath(ctx context.Context, name string) (string, error) {
+	out, err := r.git(ctx, "rev-parse", "--git-path", "hooks/"+name)
+	if err != nil {
+		return "", err
+	}
+	p := strings.TrimSpace(out)
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(r.dir, p)
+	}
+	return p, nil
+}
+
+// HeadSHA returns the full commit hash of HEAD.
+func (r *Repo) HeadSHA(ctx context.Context) (string, error) {
+	out, err := r.git(ctx, "rev-parse", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
 // TrackedFiles lists repo-relative paths under version control.
 func (r *Repo) TrackedFiles(ctx context.Context) ([]string, error) {
-	out, err := r.git(ctx, "ls-files")
+	return r.scanLines(ctx, "ls-files")
+}
+
+// ChangedFiles lists repo-relative paths that differ from HEAD in the working
+// tree (modified or deleted tracked files). This is the natural surface for
+// scraping markers, which are uncommitted local additions.
+func (r *Repo) ChangedFiles(ctx context.Context) ([]string, error) {
+	return r.scanLines(ctx, "diff", "--name-only", "HEAD")
+}
+
+// scanLines runs a git command and splits stdout into non-empty lines.
+func (r *Repo) scanLines(ctx context.Context, args ...string) ([]string, error) {
+	out, err := r.git(ctx, args...)
 	if err != nil {
 		return nil, err
 	}

@@ -6,11 +6,14 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
+	"time"
 
 	"github.com/sjrbie/nitpick/internal/config"
 	"github.com/sjrbie/nitpick/internal/forge"
 	"github.com/sjrbie/nitpick/internal/gitlocal"
+	"github.com/sjrbie/nitpick/internal/review"
 	"github.com/sjrbie/nitpick/internal/track"
 )
 
@@ -98,6 +101,121 @@ func (a *App) ViewPullRequest(ctx context.Context, number int) (PullRequestView,
 		Comments: progress,
 		Summary:  track.Summarize(progress),
 	}, nil
+}
+
+// ScrapeFailure records a marker that could not be posted.
+type ScrapeFailure struct {
+	Marker review.Marker
+	Err    error
+}
+
+// ScrapeResult reports what a scrape did (or would do, when DryRun is set).
+type ScrapeResult struct {
+	PR       forge.PullRequest
+	DryRun   bool
+	Posted   []review.Marker // markers posted (or, for a dry run, that would be)
+	Failures []ScrapeFailure
+}
+
+// Scrape collects "// nit:" markers from the working tree and posts them as
+// review comments on the current branch's open pull request. On success each
+// marker is stripped from its file and recorded in the stash. With dryRun set,
+// it reports what would be posted without touching the forge or the files.
+func (a *App) Scrape(ctx context.Context, dryRun bool) (ScrapeResult, error) {
+	if a.git == nil {
+		return ScrapeResult{}, errors.New("scrape requires a local git working tree")
+	}
+
+	pr, err := a.currentBranchPR(ctx)
+	if err != nil {
+		return ScrapeResult{}, err
+	}
+	markers, err := review.Collect(ctx, a.git, ".")
+	if err != nil {
+		return ScrapeResult{}, err
+	}
+
+	res := ScrapeResult{PR: pr, DryRun: dryRun}
+	if dryRun {
+		res.Posted = markers // "would post"
+		return res, nil
+	}
+	if len(markers) == 0 {
+		return res, nil
+	}
+
+	headSHA, err := a.git.HeadSHA(ctx)
+	if err != nil {
+		return ScrapeResult{}, err
+	}
+	stash, err := review.LoadStash(".")
+	if err != nil {
+		return ScrapeResult{}, err
+	}
+
+	for _, m := range markers {
+		c, err := a.repo.CreateReviewComment(ctx, pr.Number, forge.NewComment{
+			Path:     m.Path,
+			Line:     m.Line,
+			Side:     forge.SideRight,
+			CommitID: headSHA,
+			Body:     m.Body,
+		})
+		if err != nil {
+			res.Failures = append(res.Failures, ScrapeFailure{Marker: m, Err: err})
+			continue
+		}
+		res.Posted = append(res.Posted, m)
+		stash.Add(review.StashEntry{
+			PR:        pr.Number,
+			Path:      m.Path,
+			Line:      m.Line,
+			Body:      m.Body,
+			CommitID:  headSHA,
+			CommentID: c.ID,
+			URL:       c.URL,
+			PostedAt:  time.Now(),
+		})
+	}
+
+	// Only mutate the working tree and stash for markers that actually posted.
+	if len(res.Posted) > 0 {
+		if err := review.StripMarkers(".", res.Posted); err != nil {
+			return res, fmt.Errorf("posted %d comment(s) but failed to strip markers: %w", len(res.Posted), err)
+		}
+		if err := stash.Save("."); err != nil {
+			return res, fmt.Errorf("posted %d comment(s) but failed to save stash: %w", len(res.Posted), err)
+		}
+	}
+	return res, nil
+}
+
+// currentBranchPR finds the open pull request whose head is the checked-out
+// branch, first via the forge's head filter and then by matching head refs.
+func (a *App) currentBranchPR(ctx context.Context) (forge.PullRequest, error) {
+	branch, err := a.git.CurrentBranch(ctx)
+	if err != nil {
+		return forge.PullRequest{}, err
+	}
+	head := a.remote.Owner + ":" + branch
+	prs, err := a.ListPullRequests(ctx, forge.ListOpts{State: forge.StateOpen, Head: head})
+	if err != nil {
+		return forge.PullRequest{}, err
+	}
+	if len(prs) > 0 {
+		return prs[0], nil
+	}
+	// Fallback for forks or providers that ignore the head filter.
+	prs, err = a.ListPullRequests(ctx, forge.ListOpts{State: forge.StateOpen})
+	if err != nil {
+		return forge.PullRequest{}, err
+	}
+	for _, pr := range prs {
+		if pr.HeadRef == branch {
+			return pr, nil
+		}
+	}
+	return forge.PullRequest{}, fmt.Errorf("no open pull request found for branch %q", branch)
 }
 
 // ReviewComments returns just the assessed review comments for a pull request.
