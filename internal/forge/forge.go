@@ -71,8 +71,9 @@ type NewComment struct {
 
 // ListOpts filters and paginates a pull-request listing.
 type ListOpts struct {
-	State   State // defaults to StateOpen when empty
-	PerPage int   // provider default when 0
+	State   State  // defaults to StateOpen when empty
+	Head    string // filter by head ref, e.g. "owner:branch"; empty for no filter
+	PerPage int    // provider default when 0
 }
 
 // Forge is a code-hosting provider. It is a factory for repository handles so

@@ -132,6 +132,9 @@ func (r *repo) ListPullRequests(ctx context.Context, opts forge.ListOpts) iter.S
 	q := url.Values{}
 	q.Set("state", string(state))
 	q.Set("per_page", strconv.Itoa(perPage))
+	if opts.Head != "" {
+		q.Set("head", opts.Head)
+	}
 	first := r.base() + "/pulls?" + q.Encode()
 
 	return func(yield func(forge.PullRequest, error) bool) {
