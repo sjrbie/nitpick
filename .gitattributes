@@ -1,0 +1,6 @@
+# Normalize line endings to LF in the repository. Go tooling (gofmt) expects
+# LF, and this keeps checkouts consistent across Windows/macOS/Linux.
+* text=auto eol=lf
+
+# Explicitly treat Go sources as LF text.
+*.go text eol=lf

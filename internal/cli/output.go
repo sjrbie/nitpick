@@ -83,6 +83,9 @@ func writeComments(w io.Writer, comments []track.CommentProgress) {
 
 // renderScrape reports the outcome of a scrape (or dry run).
 func renderScrape(w io.Writer, res app.ScrapeResult) {
+	if res.Warning != "" {
+		fmt.Fprintf(w, "warning: %s\n\n", res.Warning)
+	}
 	verb := "Posted"
 	if res.DryRun {
 		verb = "Would post"
@@ -100,8 +103,16 @@ func renderScrape(w io.Writer, res app.ScrapeResult) {
 	}
 	if len(res.Failures) > 0 {
 		fmt.Fprintf(w, "\n%d comment(s) failed to post:\n\n", len(res.Failures))
+		var saw422 bool
 		for _, f := range res.Failures {
 			fmt.Fprintf(w, "  %s:%d — %v\n", f.Marker.Path, f.Marker.Line, f.Err)
+			if strings.Contains(f.Err.Error(), "422") {
+				saw422 = true
+			}
+		}
+		if saw422 {
+			fmt.Fprintln(w, "\nA 422 usually means the line isn't part of PR's diff, or the")
+			fmt.Fprintln(w, "commit isn't pushed. Comments can only land on lines the PR changed.")
 		}
 	}
 }

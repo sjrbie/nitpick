@@ -1,0 +1,11 @@
+# Keep the build context small and reproducible.
+.git
+.gitignore
+.nitpick/
+dist/
+nitpick
+nitpick.exe
+*.test
+*.out
+README.md
+plan.md

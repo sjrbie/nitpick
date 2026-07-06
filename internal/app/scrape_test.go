@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/sjrbie/nitpick/internal/config"
@@ -52,6 +53,15 @@ func gitRun(t *testing.T, dir string, args ...string) {
 	}
 }
 
+func gitHead(t *testing.T, dir string) string {
+	t.Helper()
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("rev-parse HEAD: %v", err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
 // TestScrapeEndToEnd drives the full round-trip: markers in the working tree ->
 // posted to the forge -> stripped from the file -> recorded in the stash.
 func TestScrapeEndToEnd(t *testing.T) {
@@ -76,7 +86,8 @@ func TestScrapeEndToEnd(t *testing.T) {
 
 	t.Chdir(dir) // Scrape resolves files relative to the working directory.
 
-	fr := &fakeRepo{pr: forge.PullRequest{Number: 7, HeadRef: "feature", State: forge.StateOpen}}
+	head := gitHead(t, dir)
+	fr := &fakeRepo{pr: forge.PullRequest{Number: 7, HeadRef: "feature", HeadSHA: head, State: forge.StateOpen}}
 	a := New(fakeForge{fr}, config.Remote{Owner: "o", Name: "r"}, gitlocal.New("."))
 
 	res, err := a.Scrape(context.Background(), false)
@@ -98,8 +109,8 @@ func TestScrapeEndToEnd(t *testing.T) {
 	if c.Path != "code.go" || c.Line != 2 || c.Body != "rework line2" {
 		t.Errorf("posted comment = %+v, want code.go:2 'rework line2'", c)
 	}
-	if c.CommitID == "" {
-		t.Error("posted comment missing commit id")
+	if c.CommitID != head {
+		t.Errorf("comment anchored to %q, want PR head %q", c.CommitID, head)
 	}
 	if c.Side != forge.SideRight {
 		t.Errorf("side = %q, want RIGHT", c.Side)
@@ -117,6 +128,45 @@ func TestScrapeEndToEnd(t *testing.T) {
 	// The stash recorded the posted comment.
 	if _, err := os.Stat(filepath.Join(dir, ".nitpick", "stash.json")); err != nil {
 		t.Errorf("stash not written: %v", err)
+	}
+}
+
+// TestScrapeRejectsUnpushedHead reproduces the case where local HEAD is ahead
+// of the PR: posting must fail early rather than forwarding a 422.
+func TestScrapeRejectsUnpushedHead(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	dir := t.TempDir()
+	gitRun(t, dir, "init", "-q", "-b", "feature")
+	if err := os.WriteFile(filepath.Join(dir, "code.go"), []byte("a\nb\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, dir, "add", "code.go")
+	gitRun(t, dir, "commit", "-q", "-m", "init")
+	if err := os.WriteFile(filepath.Join(dir, "code.go"), []byte("a\n// nit: x\nb\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+
+	// PR head is some other commit that isn't local HEAD (branch not pushed).
+	fr := &fakeRepo{pr: forge.PullRequest{
+		Number: 1, HeadRef: "feature", State: forge.StateOpen,
+		HeadSHA: "0000000000000000000000000000000000000000",
+	}}
+	a := New(fakeForge{fr}, config.Remote{Owner: "o", Name: "r"}, gitlocal.New("."))
+
+	_, err := a.Scrape(context.Background(), false)
+	if err == nil {
+		t.Fatal("expected an error when local HEAD is not the PR head")
+	}
+	if len(fr.created) != 0 {
+		t.Errorf("nothing should have been posted, got %d", len(fr.created))
+	}
+	// The file must be left untouched (no strip on a failed run).
+	after, _ := os.ReadFile(filepath.Join(dir, "code.go"))
+	if string(after) != "a\n// nit: x\nb\n" {
+		t.Errorf("file was modified on a failed run: %q", after)
 	}
 }
 

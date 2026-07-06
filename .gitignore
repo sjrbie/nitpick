@@ -1,5 +1,6 @@
 # Nitpick per-repo state
 .nitpick/
+.claude/
 
 *plan.md
 

@@ -115,6 +115,15 @@ type ScrapeResult struct {
 	DryRun   bool
 	Posted   []review.Marker // markers posted (or, for a dry run, that would be)
 	Failures []ScrapeFailure
+	Warning  string // non-fatal issue detected (e.g. branch not pushed), dry-run only
+}
+
+// shortSHA abbreviates a commit hash for display.
+func shortSHA(sha string) string {
+	if len(sha) > 8 {
+		return sha[:8]
+	}
+	return sha
 }
 
 // Scrape collects "// nit:" markers from the working tree and posts them as
@@ -134,8 +143,27 @@ func (a *App) Scrape(ctx context.Context, dryRun bool) (ScrapeResult, error) {
 	if err != nil {
 		return ScrapeResult{}, err
 	}
+	headSHA, err := a.git.HeadSHA(ctx)
+	if err != nil {
+		return ScrapeResult{}, err
+	}
 
 	res := ScrapeResult{PR: pr, DryRun: dryRun}
+
+	// A review comment can only anchor to a commit that is part of the PR, and
+	// its line numbers must match that commit's version of the file. If local
+	// HEAD isn't the PR's head, our line math won't match what GitHub has and
+	// every post would 422 — stop early with an actionable message. On a dry
+	// run we surface it as a warning instead of failing.
+	if pr.HeadSHA != "" && headSHA != pr.HeadSHA {
+		msg := fmt.Sprintf("local HEAD (%s) is not the head of PR #%d (%s); push your branch so the PR includes your latest commit, then retry",
+			shortSHA(headSHA), pr.Number, shortSHA(pr.HeadSHA))
+		if !dryRun {
+			return ScrapeResult{}, errors.New(msg)
+		}
+		res.Warning = msg
+	}
+
 	if dryRun {
 		res.Posted = markers // "would post"
 		return res, nil
@@ -144,9 +172,11 @@ func (a *App) Scrape(ctx context.Context, dryRun bool) (ScrapeResult, error) {
 		return res, nil
 	}
 
-	headSHA, err := a.git.HeadSHA(ctx)
-	if err != nil {
-		return ScrapeResult{}, err
+	// Anchor to the PR's head commit (guaranteed to be in the PR); it equals
+	// local HEAD after the guard above.
+	commitID := pr.HeadSHA
+	if commitID == "" {
+		commitID = headSHA
 	}
 	stash, err := review.LoadStash(".")
 	if err != nil {
@@ -158,7 +188,7 @@ func (a *App) Scrape(ctx context.Context, dryRun bool) (ScrapeResult, error) {
 			Path:     m.Path,
 			Line:     m.Line,
 			Side:     forge.SideRight,
-			CommitID: headSHA,
+			CommitID: commitID,
 			Body:     m.Body,
 		})
 		if err != nil {
@@ -171,7 +201,7 @@ func (a *App) Scrape(ctx context.Context, dryRun bool) (ScrapeResult, error) {
 			Path:      m.Path,
 			Line:      m.Line,
 			Body:      m.Body,
-			CommitID:  headSHA,
+			CommitID:  commitID,
 			CommentID: c.ID,
 			URL:       c.URL,
 			PostedAt:  time.Now(),

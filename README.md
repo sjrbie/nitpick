@@ -181,14 +181,19 @@ is truly resolved.
 
 ## Contributing
 
-Issues and pull requests are welcome. Before opening a PR:
+Issues and pull requests are welcome. There's a `Makefile` for the common tasks:
 
 ```sh
-go build ./...
-go vet ./...
-go test ./...        # add -race once you have a C toolchain available
-gofmt -l .           # should print nothing
+make build           # compile ./nitpick
+make test            # go test ./...
+make test-race       # tests with the race detector (needs a C toolchain)
+make vet             # go vet ./...
+make fmt-check       # fail if anything isn't gofmt-clean
+make install         # copy the binary to ~/.local/bin (override INSTALL_DIR=...)
+make help            # list all targets
 ```
+
+Before opening a PR, please make sure `make vet test fmt-check` is clean.
 
 ---
 
